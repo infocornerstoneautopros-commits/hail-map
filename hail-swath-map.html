@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hail Swath Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: a control panel on the left, the national map filling the rest.
+   On phones the map goes first and the panel scrolls beneath it. */
+:root{
+  --bg:#eef1f4;
+  --panel:#fbfcfd;
+  --ink:#14202b;
+  --muted:#58697a;
+  --line:#d3dae1;
+  --accent:#0b6e99;
+  --accent-ink:#ffffff;
+  --chip:#e4eaf0;
+  --ok:#1b8a4b;
+  --warn:#a35f00;
+  --bad:#b3261e;
+  --display:"Barlow Semi Condensed","Arial Narrow",Arial,Helvetica,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0c131a;
+    --panel:#121c26;
+    --ink:#e5edf4;
+    --muted:#8c9cab;
+    --line:#233241;
+    --accent:#4db4e6;
+    --accent-ink:#06202e;
+    --chip:#1b2937;
+    --ok:#4cc27a;
+    --warn:#e0a13a;
+    --bad:#ff7b72;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 var(--body)}
+.app{display:grid;grid-template-columns:392px minmax(0,1fr);height:100%}
+.panel{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:20px 18px 28px;display:flex;flex-direction:column;gap:20px;min-width:0}
+#map{height:100%;min-height:340px;background:var(--bg)}
+@media (max-width:860px){
+  html,body{height:auto}
+  .app{display:flex;flex-direction:column;height:auto}
+  #map{order:-1;height:62vh}
+  .panel{border-right:0;border-top:1px solid var(--line);overflow:visible}
+}
+h1{font:700 30px/1 var(--display);letter-spacing:.04em;text-transform:uppercase;margin:0}
+h2{font:600 12px/1 var(--display);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+.sub{margin:6px 0 0;color:var(--muted)}
+section{min-width:0}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{font:500 13px var(--body);padding:9px 6px;border:0;background:transparent;color:var(--ink);cursor:pointer;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.row + .row{margin-top:10px}
+label.field{display:flex;flex-direction:column;gap:4px;flex:1 1 150px;min-width:0;font-size:12px;color:var(--muted)}
+select,input[type=date]{font:14px var(--body);color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;width:100%;min-width:0}
+.btn{font:500 13px var(--body);padding:8px 12px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.toggles{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
+.toggles label{display:flex;gap:8px;align-items:center;cursor:pointer}
+.hint{margin:8px 0 0;font-size:12px;color:var(--muted)}
+.feeds{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.feeds li{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+.dot.ok{background:var(--ok)}.dot.fail{background:var(--bad)}.dot.load{background:var(--warn)}
+.when{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.notice{border:1px solid var(--bad);border-radius:6px;padding:10px 12px;font-size:13px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.stat{border-top:2px solid var(--line);padding-top:8px;min-width:0}
+.stat b{display:block;font:500 24px/1.1 var(--mono);font-variant-numeric:tabular-nums}
+.stat span{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.metros{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.metros li{border-top:1px solid var(--line)}
+.metros button{width:100%;text-align:left;background:transparent;border:0;color:var(--ink);cursor:pointer;padding:10px 2px;display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:10px;align-items:center;font:14px var(--body)}
+.metros button:hover{background:var(--chip)}
+.sw{width:14px;height:14px;border-radius:50%;border:2px solid var(--panel);box-shadow:0 0 0 1px var(--line)}
+.metros small{display:block;color:var(--muted);font-size:12px}
+.metros .sz{font:500 15px var(--mono);font-variant-numeric:tabular-nums}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:99px;background:var(--chip);margin-left:6px;vertical-align:1px}
+.cta{border:1px solid var(--line);border-radius:8px;padding:14px}
+.cta strong{font:600 17px var(--display);letter-spacing:.02em;display:block;margin-bottom:4px}
+.cta a.btn{display:inline-block;text-decoration:none;margin-top:8px}
+.fine{font-size:12px;color:var(--muted);margin:0}
+.fine a{color:var(--accent)}
+.legend{background:var(--panel);color:var(--ink);padding:10px 12px;border-radius:8px;border:1px solid var(--line);font-size:12px;line-height:1.3}
+.legend b{display:block;font:600 11px var(--display);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.legend div{display:flex;gap:8px;align-items:center;margin:3px 0}
+.legend i{width:12px;height:12px;border-radius:50%;flex:none;border:1px solid var(--panel);box-shadow:0 0 0 1px var(--line)}
+.leaflet-container{font-family:var(--body)}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel);color:var(--ink)}
+.leaflet-popup-content{margin:12px 14px;line-height:1.4}
+.pop-size{font:600 20px var(--display);letter-spacing:.02em}
+.pop-note{color:var(--muted);font-size:12px;margin-top:6px}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel" aria-label="Hail map controls">
+    <header>
+      <h1>Hail Swath Map</h1>
+      <p class="sub">Live NOAA and National Weather Service hail data for the contiguous U.S., with the large cities each storm touched.</p>
+    </header>
+
+    <section aria-labelledby="h-day">
+      <h2 id="h-day">Storm day</h2>
+      <div class="seg" role="group" aria-label="Storm day">
+        <button type="button" data-mode="today" aria-pressed="true">Today</button>
+        <button type="button" data-mode="yesterday" aria-pressed="false">Yesterday</button>
+        <button type="button" data-mode="date" aria-pressed="false">Pick date</button>
+      </div>
+      <div class="row" id="dateRow" hidden>
+        <label class="field" for="dayPick">Archive date
+          <input type="date" id="dayPick">
+        </label>
+      </div>
+      <p class="hint">A storm day runs 12:00 UTC to 12:00 UTC, the convention used by the Storm Prediction Center.</p>
+    </section>
+
+    <section aria-labelledby="h-filter">
+      <h2 id="h-filter">Show</h2>
+      <div class="row">
+        <label class="field" for="minSize">Minimum hail size
+          <select id="minSize">
+            <option value="0.75">0.75″ and up (penny)</option>
+            <option value="1" selected>1.00″ and up (quarter)</option>
+            <option value="1.25">1.25″ and up (half dollar)</option>
+            <option value="1.5">1.50″ and up (ping-pong ball)</option>
+            <option value="1.75">1.75″ and up (golf ball)</option>
+            <option value="2">2.00″ and up (hen egg)</option>
+            <option value="2.5">2.50″ and up (tennis ball)</option>
+          </select>
+        </label>
+        <label class="field" for="jump">Jump to a city
+          <select id="jump"><option value="">Contiguous U.S.</option></select>
+        </label>
+      </div>
+      <div class="toggles" style="margin-top:12px">
+        <label><input type="checkbox" id="tglSwaths" checked> Estimated swaths</label>
+        <label><input type="checkbox" id="tglReports" checked> Hail reports</label>
+        <label><input type="checkbox" id="tglWarn" checked> Hail warnings</label>
+        <label><input type="checkbox" id="tglRadar"> Live radar</label>
+        <label id="meshRow" hidden><input type="checkbox" id="tglMesh" checked> <span id="meshLabel">Radar hail swath</span></label>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-feeds">
+      <h2 id="h-feeds">Data feeds</h2>
+      <ul class="feeds">
+        <li><span class="dot" id="dotSpc"></span>NOAA SPC hail reports <span class="when" id="whenSpc"></span></li>
+        <li><span class="dot" id="dotNws"></span>NWS severe thunderstorm warnings <span class="when" id="whenNws"></span></li>
+        <li id="meshFeed" hidden><span class="dot" id="dotMesh"></span>NOAA radar hail swath (MESH) <span class="when" id="whenMesh"></span></li>
+      </ul>
+      <div class="row">
+        <button type="button" class="btn primary" id="refresh">Refresh</button>
+        <label class="btn" for="csvFile">Load a report CSV</label>
+        <input type="file" id="csvFile" accept=".csv,text/csv" hidden>
+      </div>
+      <div class="notice" id="notice" role="status" hidden style="margin-top:12px"></div>
+    </section>
+
+    <section aria-labelledby="h-sum">
+      <h2 id="h-sum">This storm day</h2>
+      <div class="stats">
+        <div class="stat"><b id="sumReports">0</b><span>reports</span></div>
+        <div class="stat"><b id="sumSwaths">0</b><span>swaths</span></div>
+        <div class="stat"><b id="sumMax">–</b><span id="sumMaxWhere">largest hail</span></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-metro">
+      <h2 id="h-metro">Large cities affected</h2>
+      <ol class="metros" id="metroList"></ol>
+      <p class="hint" id="metroHint">Cities with a hail report within 20 miles or inside an active hail warning.</p>
+    </section>
+
+    <section class="cta" aria-label="Contact">
+      <strong id="ctaBusiness"></strong>
+      <span id="ctaText"></span><br>
+      <a class="btn primary" id="ctaLink" href="#"></a>
+    </section>
+
+    <p class="fine">Estimated swaths come from spotter and public hail reports. The radar hail swath is NOAA's MRMS MESH estimate, which can over- or understate hail size on the ground. Reports are preliminary and can contain errors or duplicates. A mapped swath does not confirm damage to any specific vehicle or property. Data: <a href="https://www.spc.noaa.gov/climo/reports/" target="_blank" rel="noopener">NOAA Storm Prediction Center</a>, <a href="https://www.weather.gov/documentation/services-web-api" target="_blank" rel="noopener">National Weather Service API</a>.</p>
+  </aside>
+  <div id="map" role="application" aria-label="Interactive hail map"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+<script>
+"use strict";
+
+/* ---------------------------------------------------------------
+   SETTINGS: edit this block, nothing else needs to change.
+---------------------------------------------------------------- */
+const CONFIG = {
+  businessName: "Cornerstone Auto Pros",
+  phone: "940-377-2081",
+  ctaText: "Think your vehicle was in one of these storms? Schedule a free hail damage assessment.",
+
+  // NOAA's Storm Prediction Center files may not allow browser (cross-origin) requests.
+  // If the SPC feed shows an error, deploy hail-proxy-worker.js and put its URL here.
+  proxy: "",
+
+  refreshMinutes: 5,
+
+  // Basemap. OpenStreetMap's own tiles need no key, which is fine for testing and light
+  // use, but their usage policy does not allow heavy commercial traffic. Before you sell
+  // this, switch to a keyed provider (MapTiler, Stadia Maps, Mapbox) and put its tile URL
+  // in "light" and "dark". (CARTO's free tiles now require a key, which is why they went blank.)
+  basemap: {
+    light: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    dark:  "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    // OpenStreetMap has no dark style, so dark mode darkens it with a filter. Use "" with a real dark style.
+    darkFilter: "invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.7)",
+    subdomains: "",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  },
+
+  // Radar-derived swath (NOAA MRMS MESH). Point baseUrl at the folder where mesh_job.py
+  // publishes mesh_24h.png and mesh_meta.json, for example "./" or
+  // "https://yourname.github.io/hail-map/". Leave empty to hide this layer.
+  mesh: { baseUrl: "", label: "Radar hail swath (past 24 hours)", attribution: "NOAA MRMS MESH" }
+};
+
+/* LOGIC:START (pure functions, no DOM) ---------------------------- */
+const KM_PER_MI = 1.609344;
+
+const COLOR_TIERS = [
+  { min: 0.75, color: "#f5c542", range: "0.75–0.99″" },
+  { min: 1.00, color: "#f08a24", range: "1.00–1.49″" },
+  { min: 1.50, color: "#e04a2b", range: "1.50–1.99″" },
+  { min: 2.00, color: "#c2185b", range: "2.00–2.74″" },
+  { min: 2.75, color: "#8e24aa", range: "2.75–3.99″" },
+  { min: 4.00, color: "#4527a0", range: "4.00″ and up" }
+];
+const OBJECTS = [
+  [0.75, "penny"], [1.00, "quarter"], [1.25, "half dollar"], [1.50, "ping-pong ball"],
+  [1.75, "golf ball"], [2.00, "hen egg"], [2.50, "tennis ball"], [2.75, "baseball"],
+  [3.00, "teacup"], [4.00, "softball"]
+];
+function tierColor(inches) {
+  let c = COLOR_TIERS[0].color;
+  for (const t of COLOR_TIERS) if (inches >= t.min - 1e-9) c = t.color;
+  return c;
+}
+function objectName(inches) {
+  let n = "pea-size or smaller";
+  for (const [min, name] of OBJECTS) if (inches >= min - 1e-9) n = name;
+  return n;
+}
+
+// Large U.S. metro areas: [name, state, lat, lon]
+const METROS = [
+  ["New York","NY",40.71,-74.01],["Los Angeles","CA",34.05,-118.24],["Chicago","IL",41.88,-87.63],
+  ["Dallas","TX",32.78,-96.80],["Fort Worth","TX",32.75,-97.33],["Houston","TX",29.76,-95.37],
+  ["Washington","DC",38.91,-77.04],["Philadelphia","PA",39.95,-75.17],["Miami","FL",25.76,-80.19],
+  ["Atlanta","GA",33.75,-84.39],["Boston","MA",42.36,-71.06],["Phoenix","AZ",33.45,-112.07],
+  ["San Francisco","CA",37.77,-122.42],["Riverside","CA",33.95,-117.40],["Detroit","MI",42.33,-83.05],
+  ["Seattle","WA",47.61,-122.33],["Minneapolis","MN",44.98,-93.27],["San Diego","CA",32.72,-117.16],
+  ["Tampa","FL",27.95,-82.46],["Denver","CO",39.74,-104.99],["Baltimore","MD",39.29,-76.61],
+  ["St. Louis","MO",38.63,-90.20],["Orlando","FL",28.54,-81.38],["Charlotte","NC",35.23,-80.84],
+  ["San Antonio","TX",29.42,-98.49],["Portland","OR",45.52,-122.68],["Sacramento","CA",38.58,-121.49],
+  ["Pittsburgh","PA",40.44,-79.99],["Las Vegas","NV",36.17,-115.14],["Austin","TX",30.27,-97.74],
+  ["Cincinnati","OH",39.10,-84.51],["Kansas City","MO",39.10,-94.58],["Columbus","OH",39.96,-83.00],
+  ["Indianapolis","IN",39.77,-86.16],["Cleveland","OH",41.50,-81.69],["San Jose","CA",37.34,-121.89],
+  ["Nashville","TN",36.16,-86.78],["Virginia Beach","VA",36.85,-75.98],["Providence","RI",41.82,-71.41],
+  ["Jacksonville","FL",30.33,-81.66],["Milwaukee","WI",43.04,-87.91],["Raleigh","NC",35.78,-78.64],
+  ["Oklahoma City","OK",35.47,-97.52],["Memphis","TN",35.15,-90.05],["Richmond","VA",37.54,-77.44],
+  ["Louisville","KY",38.25,-85.76],["Salt Lake City","UT",40.76,-111.89],["Birmingham","AL",33.52,-86.80],
+  ["Buffalo","NY",42.89,-78.88],["Hartford","CT",41.76,-72.69],["Rochester","NY",43.16,-77.61],
+  ["Tucson","AZ",32.22,-110.97],["Tulsa","OK",36.15,-95.99],["Fresno","CA",36.74,-119.79],
+  ["Omaha","NE",41.26,-95.93],["Albuquerque","NM",35.08,-106.65],["Wichita","KS",37.69,-97.34],
+  ["Baton Rouge","LA",30.45,-91.19],["New Orleans","LA",29.95,-90.07],["Knoxville","TN",35.96,-83.92],
+  ["Greenville","SC",34.85,-82.40],["Charleston","SC",32.78,-79.93],["Des Moines","IA",41.59,-93.62],
+  ["El Paso","TX",31.76,-106.49],["Little Rock","AR",34.75,-92.29],["Boise","ID",43.62,-116.20],
+  ["Colorado Springs","CO",38.83,-104.82],["Fort Collins","CO",40.59,-105.08],["Lincoln","NE",40.81,-96.70],
+  ["Madison","WI",43.07,-89.40],["Springfield","MO",37.21,-93.29],["Lubbock","TX",33.58,-101.86],
+  ["Amarillo","TX",35.22,-101.83],["Midland","TX",32.00,-102.08],["Waco","TX",31.55,-97.15],
+  ["Denton","TX",33.21,-97.13],["McKinney","TX",33.20,-96.64],["Arlington","TX",32.74,-97.11],
+  ["Norman","OK",35.22,-97.44],["Topeka","KS",39.05,-95.68],["Sioux Falls","SD",43.55,-96.73],
+  ["Fargo","ND",46.88,-96.79],["Billings","MT",45.78,-108.50],["Cheyenne","WY",41.14,-104.82],
+  ["Rapid City","SD",44.08,-103.23],["Grand Rapids","MI",42.96,-85.67],["Toledo","OH",41.65,-83.54],
+  ["Akron","OH",41.08,-81.52],["Dayton","OH",39.76,-84.19],["Lexington","KY",38.04,-84.50],
+  ["Chattanooga","TN",35.05,-85.31],["Jackson","MS",32.30,-90.18],["Mobile","AL",30.69,-88.04],
+  ["Huntsville","AL",34.73,-86.59],["Montgomery","AL",32.38,-86.30],["Columbia","SC",34.00,-81.03],
+  ["Savannah","GA",32.08,-81.09],["Tallahassee","FL",30.44,-84.28],["Fort Myers","FL",26.64,-81.87],
+  ["Spokane","WA",47.66,-117.43],["Reno","NV",39.53,-119.81],["Albany","NY",42.65,-73.76],
+  ["Syracuse","NY",43.05,-76.15],["Harrisburg","PA",40.27,-76.88],["Allentown","PA",40.60,-75.47],
+  ["Newark","NJ",40.74,-74.17],["Manchester","NH",42.99,-71.46],["Portland","ME",43.66,-70.26],
+  ["Burlington","VT",44.48,-73.21]
+];
+
+function hav(lat1, lon1, lat2, lon2) {
+  const R = 6371, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function parseCsvLine(line) {
+  const out = []; let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+// SPC hail CSV columns: Time (HHMM, UTC), Size (hundredths of an inch), Location,
+// County, State, Lat, Lon, Comments. dayStartMs is 12:00 UTC on the storm day.
+function parseHailCsv(text, dayStartMs) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return [];
+  const head = parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
+  const ix = n => head.indexOf(n);
+  const iT = ix("time"), iS = ix("size"), iL = ix("location"), iC = ix("county"),
+        iSt = ix("state"), iLa = ix("lat"), iLo = ix("lon"), iCm = ix("comments");
+  if (iT < 0 || iS < 0 || iLa < 0 || iLo < 0) throw new Error("This file does not look like an SPC hail report CSV.");
+  const out = [];
+  for (let k = 1; k < lines.length; k++) {
+    const c = parseCsvLine(lines[k]);
+    const raw = parseFloat(c[iS]), lat = parseFloat(c[iLa]), lon = parseFloat(c[iLo]);
+    if (!isFinite(raw) || !isFinite(lat) || !isFinite(lon)) continue;
+    if (lat < 18 || lat > 72 || lon > -60 || lon < -180) continue;
+    const inches = raw >= 25 ? raw / 100 : raw;
+    const t = (c[iT] || "").trim().padStart(4, "0");
+    const hh = +t.slice(0, 2), mm = +t.slice(2, 4);
+    if (!(hh >= 0 && hh < 24 && mm >= 0 && mm < 60)) continue;
+    const minsSince12Z = ((hh * 60 + mm) - 720 + 1440) % 1440;
+    out.push({
+      ts: dayStartMs + minsSince12Z * 60000, inches,
+      loc: (c[iL] || "").trim(), county: (c[iC] || "").trim(), state: (c[iSt] || "").trim(),
+      lat, lon, comments: (c[iCm] || "").trim()
+    });
+  }
+  return out;
+}
+
+// Group reports into storms: reports within maxKm and maxGapMin of each other join the same group.
+function clusterReports(list, maxKm = 45, maxGapMin = 90) {
+  const n = list.length, parent = Array.from({ length: n }, (_, i) => i);
+  const find = i => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (Math.abs(list[i].ts - list[j].ts) > maxGapMin * 60000) continue;
+      if (Math.abs(list[i].lat - list[j].lat) > 0.5) continue;
+      if (hav(list[i].lat, list[i].lon, list[j].lat, list[j].lon) <= maxKm) {
+        const a = find(i), b = find(j);
+        if (a !== b) parent[a] = b;
+      }
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(i);
+  }
+  return [...groups.values()];
+}
+
+// Estimated swath: a corridor along the time-ordered reports of each storm, widened by hail size.
+function buildSwaths(list) {
+  const feats = [];
+  for (const g of clusterReports(list)) {
+    if (g.length < 2) continue;
+    const pts = g.map(i => list[i]).sort((a, b) => a.ts - b.ts);
+    const max = Math.max(...pts.map(p => p.inches));
+    const coords = [];
+    for (const p of pts) {
+      const last = coords[coords.length - 1];
+      if (!last || last[0] !== p.lon || last[1] !== p.lat) coords.push([p.lon, p.lat]);
+    }
+    if (coords.length < 2) continue;
+    const counts = {};
+    pts.forEach(p => { counts[p.state] = (counts[p.state] || 0) + 1; });
+    const state = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+    try {
+      const km = Math.min(14, Math.max(4, 2.5 + 3.2 * max));
+      const poly = turf.buffer(turf.lineString(coords), km, { units: "kilometers", steps: 8 });
+      poly.properties = { count: pts.length, max, start: pts[0].ts, end: pts[pts.length - 1].ts, state, widthKm: km * 2 };
+      feats.push(poly);
+    } catch (e) { /* skip a degenerate group */ }
+  }
+  return feats;
+}
+
+function metroImpacts(list, warnFeats) {
+  const out = [];
+  for (const m of METROS) {
+    let count = 0, max = 0;
+    for (const r of list) {
+      if (Math.abs(r.lat - m[2]) > 0.5) continue;
+      if (hav(r.lat, r.lon, m[2], m[3]) <= 20 * KM_PER_MI) { count++; if (r.inches > max) max = r.inches; }
+    }
+    const warned = warnFeats.some(f => { try { return turf.booleanPointInPolygon([m[3], m[2]], f); } catch (e) { return false; } });
+    if (count || warned) out.push({ name: m[0], state: m[1], lat: m[2], lon: m[3], count, max, warned });
+  }
+  out.sort((a, b) => b.max - a.max || b.count - a.count);
+  return out;
+}
+/* LOGIC:END ------------------------------------------------------ */
+
+/* ---------------------------------------------------------------
+   App
+---------------------------------------------------------------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtIn = v => v.toFixed(2) + "″";
+const fmtTime = ts => new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const fmtClock = ts => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+const state = { mode: "today", raw: [], warns: [], loadedSpc: null, loadedNws: null, source: "" };
+
+// ---- map ----
+const map = L.map("map", { preferCanvas: true, zoomControl: true, worldCopyJump: false }).fitBounds([[24.5, -125], [49.5, -66.5]]);
+map.createPane("swath"); map.getPane("swath").style.zIndex = 410;
+map.createPane("warn"); map.getPane("warn").style.zIndex = 420;
+map.createPane("reports"); map.getPane("reports").style.zIndex = 450;
+map.createPane("metros"); map.getPane("metros").style.zIndex = 460;
+
+const dark = window.matchMedia("(prefers-color-scheme: dark)");
+let base = null;
+function setBase() {
+  if (base) map.removeLayer(base);
+  base = L.tileLayer(dark.matches ? CONFIG.basemap.dark : CONFIG.basemap.light,
+    { subdomains: CONFIG.basemap.subdomains || "abc", maxZoom: 19, attribution: CONFIG.basemap.attribution }).addTo(map);
+  base.bringToBack();
+  const el = base.getContainer();
+  if (el) el.style.filter = (dark.matches && CONFIG.basemap.darkFilter) ? CONFIG.basemap.darkFilter : "";
+}
+setBase();
+if (dark.addEventListener) dark.addEventListener("change", setBase);
+
+const layers = {
+  swaths: L.layerGroup().addTo(map),
+  reports: L.layerGroup().addTo(map),
+  warn: L.layerGroup().addTo(map),
+  metros: L.layerGroup().addTo(map),
+  radar: L.tileLayer("https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png",
+    { opacity: 0.6, attribution: "Radar: NOAA NEXRAD via Iowa Environmental Mesonet", maxNativeZoom: 12 }),
+  mesh: null   // created by loadMesh() once mesh_meta.json is read
+};
+
+const legend = L.control({ position: "bottomleft" });
+legend.onAdd = () => {
+  const d = L.DomUtil.create("div", "legend");
+  d.innerHTML = "<b>Hail size</b>" + COLOR_TIERS.map(t => `<div><i style="background:${t.color}"></i>${t.range}</div>`).join("");
+  return d;
+};
+legend.addTo(map);
+
+// ---- data loading ----
+function spcTarget() {
+  const now = new Date(Date.now() - 12 * 3600e3);
+  const todayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12);
+  const base = "https://www.spc.noaa.gov/climo/reports/";
+  if (state.mode === "today") return { url: base + "today_hail.csv", dayStart: todayStart, label: "Today" };
+  if (state.mode === "yesterday") return { url: base + "yesterday_hail.csv", dayStart: todayStart - 86400e3, label: "Yesterday" };
+  const v = $("dayPick").value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error("Choose an archive date first.");
+  const [y, m, d] = v.split("-").map(Number);
+  return { url: base + v.slice(2, 4) + v.slice(5, 7) + v.slice(8, 10) + "_rpts_hail.csv", dayStart: Date.UTC(y, m - 1, d, 12), label: v };
+}
+
+async function fetchText(url) {
+  const target = CONFIG.proxy ? CONFIG.proxy + (CONFIG.proxy.includes("?") ? "&" : "?") + "url=" + encodeURIComponent(url) : url;
+  const r = await fetch(target, { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.text();
+}
+
+function setFeed(which, status, when) {
+  $("dot" + which).className = "dot " + status;
+  $("when" + which).textContent = when || "";
+}
+function showNotice(msg) { const n = $("notice"); n.hidden = !msg; n.textContent = msg || ""; }
+
+async function loadReports() {
+  setFeed("Spc", "load", "loading…");
+  let t;
+  try { t = spcTarget(); } catch (e) { setFeed("Spc", "fail", ""); showNotice(e.message); return; }
+  try {
+    const text = await fetchText(t.url);
+    state.raw = parseHailCsv(text, t.dayStart);
+    state.source = t.label;
+    state.loadedSpc = Date.now();
+    setFeed("Spc", "ok", "updated " + fmtClock(state.loadedSpc));
+    showNotice("");
+  } catch (e) {
+    setFeed("Spc", "fail", "unavailable");
+    const hint = CONFIG.proxy
+      ? "The proxy or the SPC file could not be loaded (" + e.message + ")."
+      : "The SPC hail file could not be loaded straight from the browser (" + e.message + "). This is usually a cross-origin restriction, or the file does not exist for that date. Set CONFIG.proxy to your hail-proxy-worker URL, or use “Load a report CSV”.";
+    showNotice(hint);
+  }
+}
+
+async function loadWarnings() {
+  setFeed("Nws", "load", "loading…");
+  try {
+    const r = await fetch("https://api.weather.gov/alerts/active?event=" + encodeURIComponent("Severe Thunderstorm Warning"), { headers: { Accept: "application/geo+json" } });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    state.warns = (j.features || []).filter(f => f.geometry).map(f => {
+      const p = f.properties || {}, prm = p.parameters || {};
+      const raw = (prm.maxHailSize || [])[0];
+      f.properties.hail = raw == null ? 0 : parseFloat(String(raw)) || 0;
+      return f;
+    });
+    state.loadedNws = Date.now();
+    setFeed("Nws", "ok", state.warns.length + " active · " + fmtClock(state.loadedNws));
+  } catch (e) {
+    state.warns = [];
+    setFeed("Nws", "fail", "unavailable");
+  }
+}
+
+// The MESH overlay is NOAA's rolling 24-hour maximum, so it belongs to the Today view.
+async function loadMesh() {
+  if (!CONFIG.mesh.baseUrl) return;
+  $("meshFeed").hidden = false;
+  if (state.mode !== "today") { setFeed("Mesh", "", "past 24 hours, Today view only"); return; }
+  setFeed("Mesh", "load", "loading…");
+  try {
+    const base = CONFIG.mesh.baseUrl.replace(/\/?$/, "/");
+    const r = await fetch(base + "mesh_meta.json?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const meta = await r.json();
+    const url = base + meta.image + "?v=" + encodeURIComponent(meta.generated_utc || Date.now());
+    if (layers.mesh) { layers.mesh.setUrl(url); layers.mesh.setBounds(meta.bounds); }
+    else {
+      layers.mesh = L.imageOverlay(url, meta.bounds, { opacity: 0.85, pane: "swath", attribution: CONFIG.mesh.attribution });
+      $("meshRow").hidden = false; $("meshLabel").textContent = CONFIG.mesh.label;
+      $("tglSwaths").checked = false;   // the radar swath is the better default; report swaths stay one click away
+    }
+    const valid = meta.valid_utc ? Date.parse(meta.valid_utc) : null;
+    setFeed("Mesh", "ok", valid ? "valid " + fmtClock(valid) + (meta.max_inches ? " · max " + fmtIn(meta.max_inches) : "") : "loaded");
+  } catch (e) {
+    setFeed("Mesh", "fail", "unavailable");
+  }
+}
+
+async function refreshAll() {
+  const jobs = [loadReports(), loadMesh()];
+  if (state.mode === "today") jobs.push(loadWarnings());
+  else { state.warns = []; setFeed("Nws", "", "live warnings show on Today only"); }
+  await Promise.all(jobs);
+  render();
+}
+
+// ---- rendering ----
+function render() {
+  const min = parseFloat($("minSize").value);
+  const list = state.raw.filter(r => r.inches >= min - 1e-9);
+  const warns = state.warns.filter(f => f.properties.hail >= min - 1e-9);
+
+  layers.swaths.clearLayers(); layers.reports.clearLayers(); layers.warn.clearLayers(); layers.metros.clearLayers();
+
+  const swaths = buildSwaths(list);
+  L.geoJSON({ type: "FeatureCollection", features: swaths }, {
+    pane: "swath",
+    style: f => ({ color: tierColor(f.properties.max), weight: 1.5, fillColor: tierColor(f.properties.max), fillOpacity: 0.3 }),
+    onEachFeature: (f, l) => {
+      const p = f.properties;
+      l.bindPopup(`<div class="pop-size">Estimated swath · up to ${fmtIn(p.max)}</div>${p.count} reports, ${esc(p.state)}<br>${fmtTime(p.start)} to ${fmtClock(p.end)}<div class="pop-note">Estimated from hail reports; roughly ${Math.round(p.widthKm / KM_PER_MI)} miles wide.</div>`);
+    }
+  }).addTo(layers.swaths);
+
+  for (const r of list) {
+    const m = L.circleMarker([r.lat, r.lon], {
+      pane: "reports", radius: Math.min(15, 3.5 + r.inches * 2.6),
+      color: "#ffffff", weight: 1, fillColor: tierColor(r.inches), fillOpacity: 0.92
+    });
+    m.bindPopup(`<div class="pop-size">${fmtIn(r.inches)} · ${esc(objectName(r.inches))}</div>${esc(r.loc)}${r.county ? ", " + esc(r.county) + " Co." : ""}, ${esc(r.state)}<br>${fmtTime(r.ts)}${r.comments ? `<div class="pop-note">${esc(r.comments)}</div>` : ""}`);
+    m.addTo(layers.reports);
+  }
+
+  L.geoJSON({ type: "FeatureCollection", features: warns }, {
+    pane: "warn",
+    style: f => ({ color: tierColor(Math.max(f.properties.hail, 0.75)), weight: 2.5, dashArray: "7 5", fill: false }),
+    onEachFeature: (f, l) => {
+      const p = f.properties;
+      l.bindPopup(`<div class="pop-size">Hail warning · ${fmtIn(p.hail)}</div>${esc(p.areaDesc || "")}<br>Expires ${p.expires ? fmtTime(Date.parse(p.expires)) : "–"}<div class="pop-note">${esc(p.senderName || "National Weather Service")}</div>`);
+    }
+  }).addTo(layers.warn);
+
+  const impacts = metroImpacts(list, warns);
+  for (const m of impacts) {
+    L.circleMarker([m.lat, m.lon], { pane: "metros", radius: 7, color: getComputedStyle(document.documentElement).getPropertyValue("--ink").trim() || "#000", weight: 2, fill: false })
+      .bindTooltip(`${m.name}, ${m.state}`).addTo(layers.metros);
+  }
+
+  $("sumReports").textContent = list.length;
+  $("sumSwaths").textContent = swaths.length;
+  if (list.length) {
+    const top = list.reduce((a, b) => (b.inches > a.inches ? b : a));
+    $("sumMax").textContent = fmtIn(top.inches);
+    $("sumMaxWhere").textContent = "largest · " + (top.loc ? top.loc + ", " : "") + top.state;
+  } else { $("sumMax").textContent = "–"; $("sumMaxWhere").textContent = "largest hail"; }
+
+  const ol = $("metroList"); ol.innerHTML = "";
+  if (!impacts.length) {
+    const li = document.createElement("li");
+    li.style.padding = "10px 2px"; li.style.color = "var(--muted)";
+    li.textContent = state.raw.length ? "No large cities affected at this size."
+      : state.loadedSpc ? "No hail reports in this storm day yet. Try Yesterday or Pick date to see past storms."
+      : "No hail reports loaded.";
+    ol.appendChild(li);
+  }
+  for (const m of impacts.slice(0, 25)) {
+    const li = document.createElement("li");
+    const b = document.createElement("button"); b.type = "button";
+    const size = m.max ? fmtIn(m.max) : "–";
+    b.innerHTML = `<span class="sw" style="background:${m.max ? tierColor(m.max) : "var(--chip)"}"></span><span>${esc(m.name)}, ${esc(m.state)}${m.warned ? '<span class="tag">warning</span>' : ""}<small>${m.count ? m.count + " report" + (m.count > 1 ? "s" : "") + " within 20 mi" : "inside an active hail warning"}</small></span><span class="sz">${size}</span>`;
+    b.addEventListener("click", () => { map.flyTo([m.lat, m.lon], 9); if (window.matchMedia("(max-width:860px)").matches) $("map").scrollIntoView({ behavior: "smooth" }); });
+    li.appendChild(b); ol.appendChild(li);
+  }
+  syncToggles();
+}
+
+function syncToggles() {
+  const on = (layer, id, allowed = true) => { if (!layer) return; const want = $(id).checked && allowed; if (want && !map.hasLayer(layer)) layer.addTo(map); if (!want && map.hasLayer(layer)) map.removeLayer(layer); };
+  on(layers.swaths, "tglSwaths"); on(layers.reports, "tglReports"); on(layers.warn, "tglWarn");
+  on(layers.radar, "tglRadar"); on(layers.mesh, "tglMesh", state.mode === "today");
+}
+
+// ---- controls ----
+const jump = $("jump");
+[...METROS].sort((a, b) => a[0].localeCompare(b[0])).forEach(m => {
+  const o = document.createElement("option"); o.value = m[2] + "," + m[3]; o.textContent = m[0] + ", " + m[1]; jump.appendChild(o);
+});
+jump.addEventListener("change", () => {
+  if (!jump.value) { map.flyToBounds([[24.5, -125], [49.5, -66.5]]); return; }
+  const [la, lo] = jump.value.split(",").map(Number); map.flyTo([la, lo], 9);
+});
+
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+  state.mode = b.dataset.mode;
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  $("dateRow").hidden = state.mode !== "date";
+  if (state.mode === "date" && !$("dayPick").value) {
+    const d = new Date(Date.now() - 36 * 3600e3); $("dayPick").value = d.toISOString().slice(0, 10);
+  }
+  refreshAll();
+}));
+$("dayPick").max = new Date().toISOString().slice(0, 10);
+$("dayPick").addEventListener("change", refreshAll);
+$("minSize").addEventListener("change", render);
+["tglSwaths", "tglReports", "tglWarn", "tglRadar", "tglMesh"].forEach(id => $(id).addEventListener("change", syncToggles));
+$("refresh").addEventListener("click", refreshAll);
+
+$("csvFile").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      let t; try { t = spcTarget(); } catch (err) { t = { dayStart: Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate(), 12) }; }
+      state.raw = parseHailCsv(String(rd.result), t.dayStart);
+      state.loadedSpc = Date.now();
+      setFeed("Spc", "ok", "file: " + f.name);
+      showNotice(""); render();
+    } catch (err) { showNotice(err.message); }
+  };
+  rd.readAsText(f); e.target.value = "";
+});
+
+// ---- contact block ----
+$("ctaBusiness").textContent = CONFIG.businessName;
+$("ctaText").textContent = CONFIG.ctaText;
+const cl = $("ctaLink"); cl.textContent = "Call " + CONFIG.phone; cl.href = "tel:" + CONFIG.phone.replace(/[^\d+]/g, "");
+
+window.addEventListener("resize", () => map.invalidateSize());
+refreshAll();
+setInterval(() => { if (state.mode === "today" && !document.hidden) refreshAll(); }, CONFIG.refreshMinutes * 60000);
+</script>
+</body>
+</html>
